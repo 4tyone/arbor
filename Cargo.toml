@@ -1,0 +1,27 @@
+[package]
+name = "arbor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Static analysis CLI for Python exception and None source extraction via call graph traversal"
+license = "Apache-2.0"
+repository = "https://github.com/your-org/arbor"
+homepage = "https://github.com/your-org/arbor"
+documentation = "https://github.com/your-org/arbor#documentation"
+readme = "README.md"
+keywords = ["python", "static-analysis", "exceptions", "ast", "cli"]
+categories = ["command-line-utilities", "development-tools", "parser-implementations"]
+authors = ["Arbor Contributors"]
+exclude = [".arbor/", "target/", ".git/"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tree-sitter = "0.24"
+tree-sitter-python = "0.23"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+walkdir = "2"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
