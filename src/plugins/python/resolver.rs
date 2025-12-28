@@ -306,37 +306,41 @@ impl PythonResolver {
     ) -> Option<ResolvedFunction> {
         let root = tree.root_node();
 
+        // Find ALL functions with this name, then return the last one.
+        // This handles @overload stubs - the actual implementation is always last.
+        let mut last_match: Option<ResolvedFunction> = None;
+
         for i in 0..root.child_count() {
-            let child = root.child(i)?;
+            if let Some(child) = root.child(i) {
+                let func_node = if child.kind() == "function_definition" {
+                    Some(child)
+                } else if child.kind() == "decorated_definition" {
+                    child.child_by_field_name("definition")
+                } else {
+                    None
+                };
 
-            let func_node = if child.kind() == "function_definition" {
-                Some(child)
-            } else if child.kind() == "decorated_definition" {
-                child.child_by_field_name("definition")
-            } else {
-                None
-            };
-
-            if let Some(func) = func_node {
-                if func.kind() == "function_definition" {
-                    if let Some(name_node) = func.child_by_field_name("name") {
-                        let func_name = &content[name_node.byte_range()];
-                        if func_name == name {
-                            return Some(ResolvedFunction {
-                                file_path: file_path.to_path_buf(),
-                                function_name: name.to_string(),
-                                line_start: func.start_position().row as u32 + 1,
-                                line_end: func.end_position().row as u32 + 1,
-                                is_method: false,
-                                parent_class: None,
-                            });
+                if let Some(func) = func_node {
+                    if func.kind() == "function_definition" {
+                        if let Some(name_node) = func.child_by_field_name("name") {
+                            let func_name = &content[name_node.byte_range()];
+                            if func_name == name {
+                                last_match = Some(ResolvedFunction {
+                                    file_path: file_path.to_path_buf(),
+                                    function_name: name.to_string(),
+                                    line_start: func.start_position().row as u32 + 1,
+                                    line_end: func.end_position().row as u32 + 1,
+                                    is_method: false,
+                                    parent_class: None,
+                                });
+                            }
                         }
                     }
                 }
             }
         }
 
-        None
+        last_match
     }
 
     fn find_class_definition(
@@ -457,6 +461,19 @@ impl PythonResolver {
         init_path: &Path,
         name: &str,
     ) -> Result<Option<ResolvedFunction>, ResolveError> {
+        self.find_in_init_reexport_recursive(init_path, name, 0)
+    }
+
+    fn find_in_init_reexport_recursive(
+        &mut self,
+        init_path: &Path,
+        name: &str,
+        depth: usize,
+    ) -> Result<Option<ResolvedFunction>, ResolveError> {
+        if depth > 10 {
+            return Ok(None);
+        }
+
         if !init_path.exists() {
             return Ok(None);
         }
@@ -468,11 +485,29 @@ impl PythonResolver {
             if import.name == name || import.original_name.as_deref() == Some(name) {
                 let target_name = import.original_name.as_deref().unwrap_or(&import.name);
 
-                let source_path = self.resolve_relative_import(init_path, &import.source_module);
+                let source_path = if import.source_module.starts_with('.') {
+                    self.resolve_relative_import(init_path, &import.source_module)
+                } else {
+                    let parts: Vec<&str> = import.source_module.split('.').collect();
+                    self.resolve_module_path(&parts)
+                };
 
                 if let Some(path) = source_path {
-                    if path.exists() {
-                        if let Some(resolved) = self.find_function_in_file(&path, target_name)? {
+                    let file_path = if path.is_dir() {
+                        path.join("__init__.py")
+                    } else {
+                        path.clone()
+                    };
+
+                    if file_path.exists() {
+                        if let Some(resolved) = self.find_function_in_file(&file_path, target_name)? {
+                            return Ok(Some(ResolvedFunction {
+                                function_name: name.to_string(),
+                                ..resolved
+                            }));
+                        }
+
+                        if let Some(resolved) = self.find_in_init_reexport_recursive(&file_path, target_name, depth + 1)? {
                             return Ok(Some(ResolvedFunction {
                                 function_name: name.to_string(),
                                 ..resolved
